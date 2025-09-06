@@ -13,6 +13,7 @@ export interface FileInfo {
   size: number
   imported_at: string
   ingest_state: string
+  file_type?: string
   classes: ClassInfo[]
 }
 
@@ -58,6 +59,43 @@ export interface IngestStatus {
   total_objects: number
   error_count: number
   is_active: boolean
+}
+
+export interface ConfigInfo {
+  max_concurrent_ingests: number
+  batch_size: number
+  upload_chunk_size: number
+}
+
+export interface TenantInfo {
+  tenant_id: number
+  tenant_name: string
+  tenant_dn: string
+  description?: string
+  status?: string
+  last_modified?: string
+  uid?: string
+}
+
+export interface TenantObject {
+  object_id: number
+  tenant_id: number
+  object_type: string
+  object_name: string
+  object_dn: string
+  parent_dn?: string
+  description?: string
+  status?: string
+  last_modified?: string
+}
+
+export interface TenantSearchResult {
+  search_entry: {
+    search_type: string
+    search_value: string
+    object_reference: string
+  }
+  object: TenantObject
 }
 
 export const apiService = {
@@ -176,13 +214,48 @@ export const apiService = {
     return response.data
   },
 
-  getConfig: async () => {
+  getConfig: async (): Promise<ConfigInfo> => {
     const response = await api.get('/api/config')
     return response.data
   },
 
-  updateConfig: async (config: Record<string, any>) => {
+  updateConfig: async (config: Record<string, any>): Promise<ConfigInfo> => {
     const response = await api.post('/api/config', config)
     return response.data
   },
+
+  getTenantInfo: async (fileId: number): Promise<{ tenants: TenantInfo[] }> => {
+    const response = await api.get(`/api/tenant-info?file_id=${fileId}`)
+    return response.data
+  },
+
+  getTenantObjects: async (params: {
+    file_id: number
+    object_type?: string
+    tenant_id?: number
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<{ objects: TenantObject[], total_count: number, limit: number, offset: number }> => {
+    const searchParams = new URLSearchParams()
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+    const response = await api.get(`/api/tenant-objects?${searchParams}`)
+    return response.data
+  },
+
+  searchTenantData: async (fileId: number, searchType: string, searchValue: string): Promise<{ results: TenantSearchResult[] }> => {
+    const response = await api.get(`/api/tenant-search?file_id=${fileId}&search_type=${searchType}&search_value=${searchValue}`)
+    return response.data
+  },
+
+  exportTenantData: async (fileId: number, objectType: string): Promise<Blob> => {
+    const response = await api.get(`/api/tenant-export?file_id=${fileId}&object_type=${objectType}&format=csv`, {
+      responseType: 'blob'
+    })
+    return response.data
+  }
 }

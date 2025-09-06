@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, update
 from typing import List, Optional, Dict, Any
 import os
 import hashlib
@@ -115,6 +115,14 @@ async def complete_upload(
         if not file_obj:
             raise HTTPException(status_code=404, detail="File not found")
         
+        tenant_parser = TenantParser()
+        if await tenant_parser.detect_tenant_file(file_obj.source_path):
+            await db.execute(
+                update(FileModel).where(FileModel.file_id == file_id)
+                .values(file_type="fvTenant")
+            )
+            await db.commit()
+        
         success = await ingest_manager.start_ingest(file_id)
         
         if success:
@@ -187,6 +195,7 @@ async def list_files(db: AsyncSession = Depends(get_db)):
                 "size": file_obj.size,
                 "imported_at": file_obj.imported_at.isoformat(),
                 "ingest_state": file_obj.ingest_state,
+                "file_type": file_obj.file_type,
                 "classes": [
                     {
                         "class_id": cls.class_id,
@@ -569,6 +578,192 @@ async def update_config(config: Dict[str, Any]):
             ingest_manager.batch_size = config["batch_size"]
         
         return {"message": "Configuration updated", "config": await get_config()}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tenant-info")
+async def get_tenant_info(
+    file_id: int = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get tenant information for a file"""
+    try:
+        result = await db.execute(
+            select(TenantInfo).where(TenantInfo.file_id == file_id)
+        )
+        tenants = result.scalars().all()
+        
+        return {
+            "tenants": [
+                {
+                    "tenant_id": tenant.tenant_id,
+                    "tenant_name": tenant.tenant_name,
+                    "tenant_dn": tenant.tenant_dn,
+                    "description": tenant.description,
+                    "status": tenant.status,
+                    "last_modified": tenant.last_modified.isoformat() if tenant.last_modified else None,
+                    "uid": tenant.uid
+                }
+                for tenant in tenants
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tenant-objects")
+async def get_tenant_objects(
+    file_id: int = Query(...),
+    object_type: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    limit: int = Query(100),
+    offset: int = Query(0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get tenant objects with filtering and pagination"""
+    try:
+        query = select(TenantObject).join(TenantInfo).where(TenantInfo.file_id == file_id)
+        
+        if object_type:
+            query = query.where(TenantObject.object_type == object_type)
+        if tenant_id:
+            query = query.where(TenantObject.tenant_id == tenant_id)
+        if search:
+            query = query.where(
+                or_(
+                    TenantObject.object_name.contains(search),
+                    TenantObject.object_dn.contains(search),
+                    TenantObject.description.contains(search)
+                )
+            )
+        
+        count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+        total_count = count_result.scalar()
+        
+        result = await db.execute(query.offset(offset).limit(limit))
+        objects = result.scalars().all()
+        
+        return {
+            "objects": [
+                {
+                    "object_id": obj.object_id,
+                    "tenant_id": obj.tenant_id,
+                    "object_type": obj.object_type,
+                    "object_name": obj.object_name,
+                    "object_dn": obj.object_dn,
+                    "parent_dn": obj.parent_dn,
+                    "description": obj.description,
+                    "status": obj.status,
+                    "last_modified": obj.last_modified.isoformat() if obj.last_modified else None
+                }
+                for obj in objects
+            ],
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tenant-search")
+async def search_tenant_data(
+    file_id: int = Query(...),
+    search_type: str = Query(...),
+    search_value: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Advanced search for tenant data by MAC/IP addresses"""
+    try:
+        query = select(TenantSearchIndex, TenantObject).join(
+            TenantObject, TenantSearchIndex.object_id == TenantObject.object_id
+        ).join(TenantInfo).where(
+            TenantInfo.file_id == file_id,
+            TenantSearchIndex.search_type == search_type,
+            TenantSearchIndex.search_value.contains(search_value)
+        )
+        
+        result = await db.execute(query)
+        search_results = result.all()
+        
+        return {
+            "results": [
+                {
+                    "search_entry": {
+                        "search_type": search_entry.search_type,
+                        "search_value": search_entry.search_value,
+                        "object_reference": search_entry.object_reference
+                    },
+                    "object": {
+                        "object_id": tenant_obj.object_id,
+                        "object_type": tenant_obj.object_type,
+                        "object_name": tenant_obj.object_name,
+                        "object_dn": tenant_obj.object_dn,
+                        "description": tenant_obj.description
+                    }
+                }
+                for search_entry, tenant_obj in search_results
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tenant-export")
+async def export_tenant_data(
+    file_id: int = Query(...),
+    object_type: str = Query(...),
+    format: str = Query("csv"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Export tenant data as CSV"""
+    try:
+        query = select(TenantObject, TenantAttribute).join(
+            TenantAttribute, TenantObject.object_id == TenantAttribute.object_id
+        ).join(TenantInfo).where(
+            TenantInfo.file_id == file_id,
+            TenantObject.object_type == object_type
+        )
+        
+        result = await db.execute(query)
+        data = result.all()
+        
+        objects_data = {}
+        for tenant_obj, tenant_attr in data:
+            if tenant_obj.object_id not in objects_data:
+                objects_data[tenant_obj.object_id] = {
+                    'object': tenant_obj,
+                    'attributes': {}
+                }
+            objects_data[tenant_obj.object_id]['attributes'][tenant_attr.attr_key] = tenant_attr.attr_value
+        
+        output = io.StringIO()
+        if objects_data:
+            all_keys = set()
+            for obj_data in objects_data.values():
+                all_keys.update(obj_data['attributes'].keys())
+            
+            headers = ['object_name', 'object_dn', 'description', 'status'] + sorted(all_keys)
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            
+            for obj_data in objects_data.values():
+                obj = obj_data['object']
+                attrs = obj_data['attributes']
+                row = [
+                    obj.object_name,
+                    obj.object_dn,
+                    obj.description,
+                    obj.status
+                ] + [attrs.get(key, '') for key in sorted(all_keys)]
+                writer.writerow(row)
+        
+        output.seek(0)
+        
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode()),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=tenant_{object_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -37,7 +37,7 @@ class TenantParser:
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read(10000)  # Check first 10KB
-                return '<fvTenant' in content and 'moquery -c fvTenant' in content
+                return '<fvTenant' in content
         except Exception:
             return False
     
@@ -83,8 +83,7 @@ class TenantParser:
                         break
                     
                     full_element = buffer[tag_start:next_close_tag]
-                    obj_data = await self._parse_full_element(full_element, current_tenant)
-                    if obj_data:
+                    async for obj_data in self._parse_full_element(full_element, current_tenant):
                         if obj_data.object_type == 'fvTenant':
                             current_tenant = obj_data.object_dn
                         yield obj_data
@@ -102,14 +101,15 @@ class TenantParser:
             print(f"Error parsing single tag: {e}")
             return None
     
-    async def _parse_full_element(self, element_content: str, current_tenant: Optional[str]) -> Optional[TenantObjectData]:
+    async def _parse_full_element(self, element_content: str, current_tenant: Optional[str]) -> AsyncGenerator[TenantObjectData, None]:
         """Parse full XML element with potential children"""
         try:
             root = ET.fromstring(element_content)
-            return await self._extract_object_data(root, element_content, current_tenant)
+            async for obj_data in self._extract_all_objects_from_element(root, current_tenant):
+                yield obj_data
         except Exception as e:
             print(f"Error parsing full element: {e}")
-            return None
+            return
     
     async def _extract_object_data(self, element: ET.Element, raw_xml: str, current_tenant: Optional[str]) -> Optional[TenantObjectData]:
         """Extract object data from XML element"""
@@ -164,6 +164,19 @@ class TenantParser:
             attributes=attributes,
             search_entries=search_entries
         )
+    
+    async def _extract_all_objects_from_element(self, element: ET.Element, current_tenant: Optional[str]) -> AsyncGenerator[TenantObjectData, None]:
+        """Recursively extract all tenant objects from XML element and its children"""
+        element_xml = ET.tostring(element, encoding='unicode')
+        obj_data = await self._extract_object_data(element, element_xml, current_tenant)
+        if obj_data:
+            yield obj_data
+            if obj_data.object_type == 'fvTenant':
+                current_tenant = obj_data.object_dn
+        
+        for child in element:
+            async for child_obj in self._extract_all_objects_from_element(child, current_tenant):
+                yield child_obj
     
     def _find_matching_close_tag(self, buffer: str, start_pos: int) -> int:
         """Find the matching closing tag for an opening tag"""

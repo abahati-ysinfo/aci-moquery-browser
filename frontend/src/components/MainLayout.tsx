@@ -8,6 +8,7 @@ import { apiService } from '../lib/api'
 import FileUpload from './FileUpload'
 import FileBrowser from './FileBrowser'
 import DataBrowser from './DataBrowser'
+import TenantInformation from './TenantInformation'
 import ConfigPanel from './ConfigPanel'
 
 export default function MainLayout() {
@@ -20,6 +21,9 @@ export default function MainLayout() {
     queryFn: apiService.getFiles,
     refetchInterval: 5000,
   })
+
+  const selectedFile = filesData?.files?.find(file => file.file_id === selectedFileId)
+  const isSelectedFileTenant = selectedFile?.file_type === 'fvTenant'
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light')
@@ -77,7 +81,9 @@ export default function MainLayout() {
                 <h2 className="text-lg font-semibold">Class: {selectedClassName}</h2>
               )}
               {selectedFileId && !selectedClassName && (
-                <h2 className="text-lg font-semibold">File ID: {selectedFileId}</h2>
+                <h2 className="text-lg font-semibold">
+                  {isSelectedFileTenant ? 'Tenant Information' : `File ID: ${selectedFileId}`}
+                </h2>
               )}
               {!selectedFileId && !selectedClassName && (
                 <h2 className="text-lg font-semibold">Select a file or class to browse data</h2>
@@ -87,10 +93,14 @@ export default function MainLayout() {
         </div>
 
         <div className="flex-1 p-4">
-          <DataBrowser
-            fileId={selectedFileId}
-            className={selectedClassName}
-          />
+          {isSelectedFileTenant ? (
+            <TenantInformation fileId={selectedFileId!} />
+          ) : (
+            <DataBrowser
+              fileId={selectedFileId}
+              className={selectedClassName}
+            />
+          )}
         </div>
       </div>
     </div>

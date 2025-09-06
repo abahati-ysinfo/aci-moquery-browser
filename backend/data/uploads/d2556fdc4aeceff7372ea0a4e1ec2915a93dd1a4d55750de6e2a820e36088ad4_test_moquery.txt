@@ -1,0 +1,56 @@
+# Sample ACI Moquery Log File for Testing
+# This file contains sample moquery output with multiple classes
+
+<fvTenant dn="uni/tn-production" name="production" status="created">
+  <fvAp dn="uni/tn-production/ap-web-app" name="web-app" status="created">
+    <fvAEPg dn="uni/tn-production/ap-web-app/epg-web-servers" name="web-servers" status="created" pcEnfPref="enforced">
+      <fvRsBd tnFvBDName="web-bd" status="created"/>
+      <fvRsDomAtt tDn="uni/phys-web-domain" status="created"/>
+    </fvAEPg>
+    <fvAEPg dn="uni/tn-production/ap-web-app/epg-db-servers" name="db-servers" status="created" pcEnfPref="enforced">
+      <fvRsBd tnFvBDName="db-bd" status="created"/>
+      <fvRsDomAtt tDn="uni/phys-db-domain" status="created"/>
+    </fvAEPg>
+  </fvAp>
+  <fvBD dn="uni/tn-production/BD-web-bd" name="web-bd" status="created" unicastRoute="yes">
+    <fvSubnet dn="uni/tn-production/BD-web-bd/subnet-[192.168.1.1/24]" ip="192.168.1.1/24" status="created"/>
+    <fvRsCtx tnFvCtxName="production-vrf" status="created"/>
+  </fvBD>
+  <fvBD dn="uni/tn-production/BD-db-bd" name="db-bd" status="created" unicastRoute="yes">
+    <fvSubnet dn="uni/tn-production/BD-db-bd/subnet-[192.168.2.1/24]" ip="192.168.2.1/24" status="created"/>
+    <fvRsCtx tnFvCtxName="production-vrf" status="created"/>
+  </fvBD>
+  <fvCtx dn="uni/tn-production/ctx-production-vrf" name="production-vrf" status="created" pcEnfPref="enforced"/>
+</fvTenant>
+
+<fabricNode dn="topology/pod-1/node-101" id="101" name="leaf-101" role="leaf" fabricSt="active">
+  <fabricLooseNode dn="topology/pod-1/node-101/nprfabloosenode" status="created"/>
+  <fabricNodeBlk dn="topology/pod-1/node-101/nodeblk-blk101" name="blk101" from_="101" to_="101" status="created"/>
+</fabricNode>
+
+<fabricNode dn="topology/pod-1/node-102" id="102" name="leaf-102" role="leaf" fabricSt="active">
+  <fabricLooseNode dn="topology/pod-1/node-102/nprfabloosenode" status="created"/>
+  <fabricNodeBlk dn="topology/pod-1/node-102/nodeblk-blk102" name="blk102" from_="102" to_="102" status="created"/>
+</fabricNode>
+
+<l3extOut dn="uni/tn-production/out-external-l3out" name="external-l3out" status="created" enforceRtctrl="export">
+  <l3extLNodeP dn="uni/tn-production/out-external-l3out/lnodep-border-leaves" name="border-leaves" status="created">
+    <l3extRsNodeL3OutAtt tDn="topology/pod-1/node-101" rtrId="10.1.1.101" status="created"/>
+    <l3extRsNodeL3OutAtt tDn="topology/pod-1/node-102" rtrId="10.1.1.102" status="created"/>
+  </l3extLNodeP>
+  <l3extInstP dn="uni/tn-production/out-external-l3out/instP-external-epg" name="external-epg" status="created">
+    <fvRsCons tnVzBrCPName="web-contract" status="created"/>
+    <l3extSubnet dn="uni/tn-production/out-external-l3out/instP-external-epg/extsubnet-[0.0.0.0/0]" ip="0.0.0.0/0" status="created"/>
+  </l3extInstP>
+</l3extOut>
+
+<vzBrCP dn="uni/tn-production/brc-web-contract" name="web-contract" status="created" scope="tenant">
+  <vzSubj dn="uni/tn-production/brc-web-contract/subj-web-subject" name="web-subject" status="created" revFltPorts="yes">
+    <vzRsSubjFiltAtt tnVzFilterName="web-filter" status="created"/>
+  </vzSubj>
+</vzBrCP>
+
+<vzFilter dn="uni/tn-production/flt-web-filter" name="web-filter" status="created">
+  <vzEntry dn="uni/tn-production/flt-web-filter/e-http" name="http" etherT="ip" prot="tcp" dFromPort="80" dToPort="80" status="created"/>
+  <vzEntry dn="uni/tn-production/flt-web-filter/e-https" name="https" etherT="ip" prot="tcp" dFromPort="443" dToPort="443" status="created"/>
+</vzFilter>

@@ -298,10 +298,6 @@ class IngestManager:
     
     async def _parse_and_ingest_tenant(self, session: AsyncSession, file_obj: File, file_path: str):
         """Parse tenant file and ingest tenant-specific data"""
-        tenant_parser = TenantParser()
-        tenant_cache = {}
-        
-        async for tenant_obj_data in tenant_parser.parse_tenant_file(file_path):
             try:
                 if tenant_obj_data.object_type == 'fvTenant':
                     if tenant_obj_data.object_name not in tenant_cache:
@@ -325,45 +321,4 @@ class IngestManager:
                         break
                 
                 if parent_tenant:
-                    tenant_object = TenantObject(
-                        tenant_id=parent_tenant.tenant_id,
-                        object_type=tenant_obj_data.object_type,
-                        object_name=tenant_obj_data.object_name,
-                        object_dn=tenant_obj_data.object_dn,
-                        parent_dn=tenant_obj_data.parent_dn,
-                        description=tenant_obj_data.description,
-                        status=tenant_obj_data.status,
-                        last_modified=tenant_obj_data.last_modified,
-                        raw_xml=tenant_obj_data.raw_xml
-                    )
-                    session.add(tenant_object)
-                    await session.flush()
-                    
-                    for key, value in tenant_obj_data.attributes.items():
-                        tenant_attr = TenantAttribute(
-                            object_id=tenant_object.object_id,
-                            attr_key=key,
-                            attr_value=value,
-                            is_dn=key.lower().endswith('dn') or value.startswith('uni/'),
-                            is_ip='.' in value and any(c.isdigit() for c in value),
-                            is_mac=':' in value and len(value.replace(':', '')) == 12
-                        )
-                        session.add(tenant_attr)
-                    
-                    for search_type, search_value in tenant_obj_data.search_entries:
-                        search_entry = TenantSearchIndex(
-                            tenant_id=parent_tenant.tenant_id,
-                            object_id=tenant_object.object_id,
-                            search_type=search_type,
-                            search_value=search_value,
-                            object_reference=f"{tenant_obj_data.object_type}:{tenant_obj_data.object_name}"
-                        )
-                        session.add(search_entry)
-                
-                await session.commit()
-                
-            except Exception as e:
-                print(f"Error processing tenant object: {e}")
-                continue
-
 ingest_manager = IngestManager()

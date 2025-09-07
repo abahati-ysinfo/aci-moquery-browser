@@ -75,12 +75,22 @@ async def upload_file(
         if chunk_number == total_chunks - 1:
             file_size = os.path.getsize(file_path)
             
+            file_type = "moquery"  # default
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    first_few_lines = f.read(1024)  # Read first 1KB
+                    if 'fvTenant' in first_few_lines or 'moquery -c fvTenant' in first_few_lines:
+                        file_type = "fvTenant"
+            except Exception:
+                pass  # Keep default if reading fails
+            
             db_file = FileModel(
                 name=file.filename,
                 size=file_size,
                 hash=file_hash,
                 source_path=file_path,
-                ingest_state="uploaded"
+                ingest_state="uploaded",
+                file_type=file_type
             )
             db.add(db_file)
             await db.commit()

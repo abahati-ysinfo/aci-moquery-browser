@@ -124,6 +124,11 @@ export default function FileBrowser({
                               <span className="text-xs text-muted-foreground">
                                 {formatBytes(file.size)}
                               </span>
+                              {file.file_type === 'fvTenant' && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Tenant
+                                </Badge>
+                              )}
                               <Badge variant="outline" className={`text-xs ${getStatusColor(file.ingest_state)}`}>
                                 {file.ingest_state}
                               </Badge>

@@ -125,6 +125,14 @@ async def complete_upload(
         if not file_obj:
             raise HTTPException(status_code=404, detail="File not found")
         
+        tenant_parser = TenantParser()
+        if await tenant_parser.detect_tenant_file(file_obj.source_path):
+            await db.execute(
+                update(FileModel).where(FileModel.file_id == file_id)
+                .values(file_type="fvTenant")
+            )
+            await db.commit()
+        
         success = await ingest_manager.start_ingest(file_id)
         
         if success:
@@ -197,6 +205,7 @@ async def list_files(db: AsyncSession = Depends(get_db)):
                 "size": file_obj.size,
                 "imported_at": file_obj.imported_at.isoformat(),
                 "ingest_state": file_obj.ingest_state,
+                "file_type": file_obj.file_type,
                 "classes": [
                     {
                         "class_id": cls.class_id,

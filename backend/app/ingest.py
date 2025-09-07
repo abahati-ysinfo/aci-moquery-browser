@@ -7,8 +7,9 @@ import py7zr
 from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from .models import File, Class, Object, Attribute, Relation, IngestError
+from .models import File, Class, Object, Attribute, Relation, IngestError, TenantInfo, TenantObject, TenantAttribute, TenantSearchIndex
 from .parser import MoqueryParser, ParsedObject
+from .tenant_parser import TenantParser
 from .database import AsyncSessionLocal
 
 class IngestManager:
@@ -117,7 +118,10 @@ class IngestManager:
                 )
                 await session.commit()
                 
-                await self._parse_and_ingest(session, file_obj, file_path)
+                if file_obj.file_type == "fvTenant":
+                    await self._parse_and_ingest_tenant(session, file_obj, file_path)
+                else:
+                    await self._parse_and_ingest(session, file_obj, file_path)
                 
                 await session.execute(
                     update(File).where(File.file_id == file_id).values(ingest_state="indexing")
@@ -291,5 +295,115 @@ class IngestManager:
     async def _create_indexes(self, session: AsyncSession, file_id: int):
         """Create post-ingest indexes for performance"""
         pass
+    
+    async def _parse_and_ingest_tenant(self, session: AsyncSession, file_obj: File, file_path: str):
+        """Parse tenant file and ingest tenant-specific data"""
+        print(f"DEBUG: Starting tenant ingestion for file {file_obj.file_id}: {file_path}")
+        tenant_parser = TenantParser()
+        tenant_cache = {}
+        tenant_object_batch = []
+        batch_count = 0
+        total_objects = 0
+        
+        print(f"DEBUG: Starting to parse tenant file...")
+        async for tenant_obj_data in tenant_parser.parse_tenant_file(file_path):
+            total_objects += 1
+            if total_objects <= 5:  # Only log first 5 objects to avoid spam
+                print(f"DEBUG: Processing tenant object {total_objects}: {tenant_obj_data.object_type} - {tenant_obj_data.object_name}")
+            try:
+                if tenant_obj_data.object_type == 'fvTenant':
+                    if tenant_obj_data.object_name not in tenant_cache:
+                        tenant_info = TenantInfo(
+                            file_id=file_obj.file_id,
+                            tenant_name=tenant_obj_data.object_name,
+                            tenant_dn=tenant_obj_data.object_dn,
+                            description=tenant_obj_data.description,
+                            status=tenant_obj_data.status,
+                            last_modified=tenant_obj_data.last_modified,
+                            uid=tenant_obj_data.attributes.get('uid')
+                        )
+                        session.add(tenant_info)
+                        await session.flush()
+                        tenant_cache[tenant_obj_data.object_name] = tenant_info
+                
+                parent_tenant = None
+                for tenant_name, tenant_info in tenant_cache.items():
+                    if tenant_obj_data.object_dn.startswith(f"uni/tn-{tenant_name}"):
+                        parent_tenant = tenant_info
+                        break
+                
+                if parent_tenant:
+                    tenant_object_batch.append({
+                        'tenant_id': parent_tenant.tenant_id,
+                        'object_type': tenant_obj_data.object_type,
+                        'object_name': tenant_obj_data.object_name,
+                        'object_dn': tenant_obj_data.object_dn,
+                        'parent_dn': tenant_obj_data.parent_dn,
+                        'description': tenant_obj_data.description,
+                        'status': tenant_obj_data.status,
+                        'last_modified': tenant_obj_data.last_modified,
+                        'attributes': tenant_obj_data.attributes,
+                        'search_entries': tenant_obj_data.search_entries
+                    })
+                    
+                    batch_count += 1
+                    
+                    if batch_count >= self.batch_size:
+                        print(f"DEBUG: Committing batch of {batch_count} tenant objects")
+                        await self._commit_tenant_batch(session, tenant_object_batch)
+                        tenant_object_batch.clear()
+                        batch_count = 0
+                        
+            except Exception as e:
+                print(f"Error processing tenant object: {e}")
+                continue
+        
+        if tenant_object_batch:
+            print(f"DEBUG: Committing final batch of {len(tenant_object_batch)} tenant objects")
+            await self._commit_tenant_batch(session, tenant_object_batch)
+        
+        print(f"DEBUG: Completed tenant ingestion. Total objects processed: {total_objects}")
+
+    async def _commit_tenant_batch(self, session: AsyncSession, object_batch: List[Dict]):
+        """Commit a batch of tenant objects with their attributes and search entries"""
+        tenant_objects = []
+        for obj_data in object_batch:
+            tenant_object = TenantObject(
+                tenant_id=obj_data['tenant_id'],
+                object_type=obj_data['object_type'],
+                object_name=obj_data['object_name'],
+                object_dn=obj_data['object_dn'],
+                parent_dn=obj_data['parent_dn'],
+                description=obj_data['description'],
+                status=obj_data['status'],
+                last_modified=obj_data['last_modified']
+            )
+            tenant_objects.append(tenant_object)
+        
+        session.add_all(tenant_objects)
+        await session.flush()
+        
+        for i, tenant_obj in enumerate(tenant_objects):
+            obj_data = object_batch[i]
+            
+            for key, value in obj_data['attributes'].items():
+                tenant_attr = TenantAttribute(
+                    object_id=tenant_obj.object_id,
+                    attr_key=key,
+                    attr_value=value
+                )
+                session.add(tenant_attr)
+            
+            for search_type, search_value in obj_data['search_entries']:
+                search_entry = TenantSearchIndex(
+                    tenant_id=tenant_obj.tenant_id,
+                    object_id=tenant_obj.object_id,
+                    search_type=search_type,
+                    search_value=search_value,
+                    object_reference=f"{obj_data['object_type']}:{obj_data['object_name']}"
+                )
+                session.add(search_entry)
+        
+        await session.commit()
 
 ingest_manager = IngestManager()
